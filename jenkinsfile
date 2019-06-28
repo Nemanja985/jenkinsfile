@@ -1,0 +1,74 @@
+pipeline {
+  agent any
+
+  options {
+    buildDiscarder(logRotator(daysToKeepStr: '14', artifactDaysToKeepStr: '3',))
+  }
+  
+  // execute pipeline every night at 23:30
+  triggers {
+    cron('30 23 * * *')
+  }
+
+  environment {
+    DOCKER_BUILDKIT = '1'
+  }
+
+  parameters {
+    string(name: 'versionOverride', defaultValue: '2.0')
+    string(name: 'REQUIRESIO_TOKEN', defaultValue: '')
+  }
+
+  stages {
+    stage('set variables') {
+      steps {
+        script {
+          (version, iteration) = getVersion(params.versionOverride)
+          env.VERSION = version
+          env.ITERATION = iteration
+          env.VERSION_FULL = "${version}-${iteration}"
+          env.VERSION_MINOR = version.split(/\./)[0..1].join('.')
+          env.IMAGE_TAG = "${env.VERSION_FULL}"
+        }
+      }
+    }
+
+    stage('build') {
+      steps {
+        sh "make build"
+      }
+    }
+
+    stage('test') {
+      steps {
+        sh "make test"
+      }
+    }
+
+    stage('security scan') {
+        steps {
+            sh "make scan REQUIRESIO_TOKEN=${params.REQUIRESIO_TOKEN}"
+        }
+    }
+
+    stage('build package') {
+      steps {
+        sh "make build-signed-packages"
+        archiveArtifacts(artifacts: 'dist/*', fingerprint: true)
+      }
+    }
+  }
+
+  post {
+    // // send Slack messages for sucess and failure to #portal-ext channel
+    // success {
+    //   slackSend color: 'good', message: "mccp - #$JOB_NAME Success after $currentBuild.durationString. $BUILD_URL.", channel: '#portal-ext'
+    // }
+    // failure {
+    //   slackSend color: '#FF0000', message: "mccp - #$JOB_NAME Fail after $currentBuild.durationString. $BUILD_URL.", channel: '#portal-ext'
+    // }
+    always {
+      sh "make clean"
+    }
+  }
+}
